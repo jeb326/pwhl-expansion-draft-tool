@@ -1,0 +1,615 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PWHL Expansion Draft Tool</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+</head>
+<body class="bg-gray-100 font-sans">
+    <div class="container mx-auto p-4">
+        <h1 class="text-3xl font-bold text-center mb-6">PWHL Expansion Draft Tool</h1>
+        <p class="text-center mb-4">Simulate the 2025 PWHL expansion draft for Vancouver and Seattle. Upload a CSV with team rosters to begin!</p>
+        
+        <!-- CSV Upload -->
+        <div class="bg-white p-4 rounded shadow mb-6">
+            <h2 class="text-xl font-semibold mb-2">Upload Roster CSV</h2>
+            <p class="mb-2">CSV must have columns: Current Team, Full Name, Pos, Status, Overall, Potential, Player type, Role, and stats (GP, G, A, PTS, etc.)</p>
+            <p class="mb-2 text-sm">Only players with Status = 'CP' (Contracted Player) are included. Free Agents (FA) and Outside the League (OL) players are excluded.</p>
+            <input type="file" id="csvUpload" accept=".csv" class="mb-2">
+            <div id="csvError" class="text-red-500 hidden"></div>
+        </div>
+
+        <!-- Instructions -->
+        <div class="bg-white p-4 rounded shadow mb-6">
+            <h2 class="text-xl font-semibold mb-2">Instructions</h2>
+            <p>1. Upload a CSV with player rosters (only contracted players are included).</p>
+            <p>2. Select up to 3 players to protect for each team in the roster grid below.</p>
+            <p>3. Use the signing window to select up to 5 players for Vancouver and Seattle.</p>
+            <p>4. Proceed to the draft to select additional players (max 4 per existing team).</p>
+            <p>5. View updated rosters or reset to start over.</p>
+            <p>Hover over player names to view stats and attributes.</p>
+            <p>After completing the draft, export the rosters for all 8 teams as a CSV.</p>
+        </div>
+
+        <!-- Team Rosters -->
+        <div id="teams" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6"></div>
+
+        <!-- Signing Window and Draft Controls -->
+        <div class="bg-white p-4 rounded shadow mb-6">
+            <h2 class="text-xl font-semibold mb-2">Expansion Draft Process</h2>
+            <div id="signingWindow" class="mb-4">
+                <h3 class="text-lg font-medium mb-2">Pre-Draft Signing Window</h3>
+                <p class="mb-2">Select up to 5 players for each expansion team.</p>
+                <div class="flex space-x-4">
+                    <div>
+                        <label class="block mb-1">Vancouver Signing</label>
+                        <select id="vancouverSign" class="border p-2 rounded w-64">
+                            <option value="">Select a player</option>
+                        </select>
+                        <button id="addVancouverSign" class="bg-blue-500 text-white px-2 py-1 rounded hover:bg-blue-600 ml-2">Add</button>
+                    </div>
+                    <div>
+                        <label class="block mb-1">Seattle Signing</label>
+                        <select id="seattleSign" class="border p-2 rounded w-64">
+                            <option value="">Select a player</option>
+                        </select>
+                        <button id="addSeattleSign" class="bg-blue-500 text-white px-2 py-1 rounded hover:bg-blue-600 ml-2">Add</button>
+                    </div>
+                </div>
+                <button id="completeSigning" class="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600 mt-4">Complete Signing Window</button>
+            </div>
+            <div id="draftPhase" class="mb-4">
+                <h3 class="text-lg font-medium mb-2">Expansion Draft</h3>
+                <p class="mb-2">Select players for each expansion team (max 4 per existing team).</p>
+                <div class="flex space-x-4">
+                    <div>
+                        <label class="block mb-1">Vancouver Draft Pick</label>
+                        <select id="vancouverDraft" class="border p-2 rounded w-64">
+                            <option value="">Select a player</option>
+                        </select>
+                        <button id="addVancouverDraft" class="bg-blue-500 text-white px-2 py-1 rounded hover:bg-blue-600 ml-2">Add</button>
+                    </div>
+                    <div>
+                        <label class="block mb-1">Seattle Draft Pick</label>
+                        <select id="seattleDraft" class="border p-2 rounded w-64">
+                            <option value="">Select a player</option>
+                        </select>
+                        <button id="addSeattleDraft" class="bg-blue-500 text-white px-2 py-1 rounded hover:bg-blue-600 ml-2">Add</button>
+                    </div>
+                </div>
+                <button id="completeDraft" class="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600 mt-4">Complete Draft</button>
+                <button id="exportRosters" class="bg-purple-500 text-white px-4 py-2 rounded hover:bg-purple-600 mt-4 hidden">Export Rosters</button>
+            </div>
+            <button id="resetDraft" class="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 mt-4">Reset Draft</button>
+        </div>
+
+        <!-- Expansion Team Rosters -->
+        <div id="expansionTeams" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
+    </div>
+
+    <script>
+        let teams = {};
+        const expansionTeams = {
+            Vancouver: [],
+            Seattle: []
+        };
+        let protectedPlayers = {};
+        let losses = {};
+        let signingPhase = true;
+
+        // Initialize state
+        function initialize() {
+            Object.keys(teams).forEach(team => {
+                protectedPlayers[team] = [];
+                losses[team] = 0;
+            });
+            expansionTeams.Vancouver = [];
+            expansionTeams.Seattle = [];
+            signingPhase = true;
+            document.getElementById('signingWindow').classList.remove('hidden');
+            document.getElementById('draftPhase').classList.add('mb-4');
+            document.getElementById('exportRosters').classList.add('hidden');
+            updatePlayerSelections();
+            renderTeams();
+        }
+        initialize();
+
+        // Handle CSV upload
+        document.getElementById('csvUpload').addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            Papa.parse(file, {
+                header: true,
+                complete: (result) => {
+                    const data = result.data;
+                    const errors = result.errors;
+                    const errorDiv = document.getElementById('csvError');
+
+                    if (errors.length > 0 || !data.length) {
+                        errorDiv.textContent = 'Error parsing CSV. Please check the file format.';
+                        errorDiv.classList.remove('hidden');
+                        return;
+                    }
+
+                    // Validate required columns
+                    const requiredColumns = [
+                        'Current Team', 'Full Name', 'Pos', 'Status',
+                        'Overall', 'Potential', 'Player type', 'Role',
+                        'GP', 'G', 'A', 'PTS', 'Plus Minus', 'PIM',
+                        'PPG', 'SHG', 'GWG', 'SOG', 'FO', 'WF%',
+                        'Min', 'GA', 'GAA', 'W', 'L', 'OT', 'SOL', 'SVS', 'SA', 'SAV%', 'SO'
+                    ];
+                    const columns = Object.keys(data[0]);
+                    if (!requiredColumns.every(col => columns.includes(col))) {
+                        errorDiv.textContent = 'CSV must include required columns: ' + requiredColumns.join(', ');
+                        errorDiv.classList.remove('hidden');
+                        return;
+                    }
+
+                    // Clear previous data
+                    teams = {};
+                    errorDiv.classList.add('hidden');
+
+                    // Populate teams, including only contracted players
+                    data.forEach(row => {
+                        const status = row['Status'] ? row['Status'].trim() : '';
+                        if (
+                            row['Current Team'] &&
+                            row['Full Name'] &&
+                            row['Pos'] &&
+                            status === 'CP'
+                        ) {
+                            const teamName = row['Current Team'].trim();
+                            if (!teams[teamName]) {
+                                teams[teamName] = [];
+                            }
+                            teams[teamName].push({
+                                name: row['Full Name'].trim(),
+                                position: row['Pos'].trim(),
+                                overall: row['Overall'] || 'N/A',
+                                potential: row['Potential'] || 'N/A',
+                                playerType: row['Player type'] || 'N/A',
+                                role: row['Role'] || 'N/A',
+                                stats: {
+                                    gp: row['GP'] || 'N/A',
+                                    g: row['G'] || 'N/A',
+                                    a: row['A'] || 'N/A',
+                                    pts: row['PTS'] || 'N/A',
+                                    plusMinus: row['Plus Minus'] || 'N/A',
+                                    pim: row['PIM'] || 'N/A',
+                                    ppg: row['PPG'] || 'N/A',
+                                    shg: row['SHG'] || 'N/A',
+                                    gwg: row['GWG'] || 'N/A',
+                                    sog: row['SOG'] || 'N/A',
+                                    fo: row['FO'] || 'N/A',
+                                    wfPercent: row['WF%'] || 'N/A',
+                                    min: row['Min'] || 'N/A',
+                                    ga: row['GA'] || 'N/A',
+                                    gaa: row['GAA'] || 'N/A',
+                                    w: row['W'] || 'N/A',
+                                    l: row['L'] || 'N/A',
+                                    ot: row['OT'] || 'N/A',
+                                    sol: row['SOL'] || 'N/A',
+                                    svs: row['SVS'] || 'N/A',
+                                    sa: row['SA'] || 'N/A',
+                                    savPercent: row['SAV%'] || 'N/A',
+                                    so: row['SO'] || 'N/A'
+                                }
+                            });
+                        }
+                    });
+
+                    // Validate that teams were populated
+                    if (Object.keys(teams).length === 0) {
+                        errorDiv.textContent = 'No contracted players (Status = "CP") found in CSV. Excluded FA and OL players.';
+                        errorDiv.classList.remove('hidden');
+                        return;
+                    }
+
+                    // Initialize state and render
+                    initialize();
+                },
+                error: () => {
+                    document.getElementById('csvError').textContent = 'Failed to read CSV file.';
+                    document.getElementById('csvError').classList.remove('hidden');
+                }
+            });
+        });
+
+        // Format stats for tooltip
+        function formatStats(player) {
+            const isGoaltender = player.position === 'Goaltender';
+            return `
+                <strong>Overall:</strong> ${player.overall}<br>
+                <strong>Potential:</strong> ${player.potential}<br>
+                <strong>Player Type:</strong> ${player.playerType}<br>
+                <strong>Role:</strong> ${player.role}<br>
+                <strong>Stats:</strong><br>
+                ${isGoaltender ? `
+                    GP: ${player.stats.gp}<br>
+                    Min: ${player.stats.min}<br>
+                    GA: ${player.stats.ga}<br>
+                    GAA: ${player.stats.gaa}<br>
+                    W: ${player.stats.w}<br>
+                    L: ${player.stats.l}<br>
+                    OT: ${player.stats.ot}<br>
+                    SOL: ${player.stats.sol}<br>
+                    SVS: ${player.stats.svs}<br>
+                    SA: ${player.stats.sa}<br>
+                    SAV%: ${player.stats.savPercent}<br>
+                    SO: ${player.stats.so}
+                ` : `
+                    GP: ${player.stats.gp}<br>
+                    G: ${player.stats.g}<br>
+                    A: ${player.stats.a}<br>
+                    PTS: ${player.stats.pts}<br>
+                    +/-: ${player.stats.plusMinus}<br>
+                    PIM: ${player.stats.pim}<br>
+                    PPG: ${player.stats.ppg}<br>
+                    SHG: ${player.stats.shg}<br>
+                    GWG: ${player.stats.gwg}<br>
+                    SOG: ${player.stats.sog}<br>
+                    FO: ${player.stats.fo}<br>
+                    WF%: ${player.stats.wfPercent}
+                `}
+            `;
+        }
+
+        // Render teams
+        function renderTeams() {
+            const teamsDiv = document.getElementById('teams');
+            teamsDiv.innerHTML = Object.keys(teams).length === 0 ? '<p class="text-center">Upload a CSV to view team rosters.</p>' : '';
+            Object.keys(teams).forEach(team => {
+                const teamDiv = document.createElement('div');
+                teamDiv.className = 'bg-white p-4 rounded shadow';
+                teamDiv.innerHTML = `
+                    <h2 class="text-xl font-semibold mb-2">${team}</h2>
+                    <table class="w-full">
+                        <thead>
+                            <tr class="bg-gray-200">
+                                <th class="p-2">Protect</th>
+                                <th class="p-2">Name</th>
+                                <th class="p-2">Position</th>
+                                <th class="p-2">Overall</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${teams[team].map(player => `
+                                <tr>
+                                    <td class="p-2">
+                                        <input type="checkbox" 
+                                               data-team="${team}" 
+                                               data-name="${player.name}" 
+                                               ${protectedPlayers[team]?.includes(player.name) ? 'checked' : ''}
+                                               ${protectedPlayers[team]?.length >= 3 && !protectedPlayers[team]?.includes(player.name) && losses[team] < 2 ? 'disabled' : ''}
+                                               ${protectedPlayers[team]?.length >= 4 && !protectedPlayers[team]?.includes(player.name) && losses[team] >= 2 ? 'disabled' : ''}>
+                                    </td>
+                                    <td class="p-2 relative group">
+                                        <span class="underline cursor-pointer">${player.name}</span>
+                                        <div class="absolute hidden group-hover:block bg-gray-800 text-white text-sm rounded p-2 z-10 w-64">
+                                            ${formatStats(player)}
+                                        </div>
+                                    </td>
+                                    <td class="p-2">${player.position}</td>
+                                    <td class="p-2">${player.overall}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                `;
+                teamsDiv.appendChild(teamDiv);
+            });
+
+            // Add event listeners for checkboxes
+            document.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
+                checkbox.addEventListener('change', (e) => {
+                    const team = e.target.dataset.team;
+                    const name = e.target.dataset.name;
+                    if (!protectedPlayers[team]) protectedPlayers[team] = [];
+                    if (e.target.checked) {
+                        if (protectedPlayers[team].length < (losses[team] >= 2 ? 4 : 3)) {
+                            protectedPlayers[team].push(name);
+                        } else {
+                            e.target.checked = false;
+                            alert(`Cannot protect more than ${losses[team] >= 2 ? 4 : 3} players for ${team}.`);
+                        }
+                    } else {
+                        protectedPlayers[team] = protectedPlayers[team].filter(n => n !== name);
+                    }
+                    renderTeams();
+                    updatePlayerSelections();
+                });
+            });
+
+            updatePlayerSelections();
+        }
+
+        // Render expansion teams
+        function renderExpansionTeams() {
+            const expDiv = document.getElementById('expansionTeams');
+            expDiv.innerHTML = '';
+            Object.keys(expansionTeams).forEach(team => {
+                const teamDiv = document.createElement('div');
+                teamDiv.className = 'bg-white p-4 rounded shadow';
+                teamDiv.innerHTML = `
+                    <h2 class="text-xl font-semibold mb-2">${team}</h2>
+                    <table class="w-full">
+                        <thead>
+                            <tr class="bg-gray-200">
+                                <th class="p-2">Name</th>
+                                <th class="p-2">Position</th>
+                                <th class="p-2">Overall</th>
+                                <th class="p-2">From</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${expansionTeams[team].map(player => `
+                                <tr>
+                                    <td class="p-2 relative group">
+                                        <span class="underline cursor-pointer">${player.name}</span>
+                                        <div class="absolute hidden group-hover:block bg-gray-800 text-white text-sm rounded p-2 z-10 w-64">
+                                            ${formatStats(player)}
+                                        </div>
+                                    </td>
+                                    <td class="p-2">${player.position}</td>
+                                    <td class="p-2">${player.overall}</td>
+                                    <td class="p-2">${player.from}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                `;
+                expDiv.appendChild(teamDiv);
+            });
+        }
+
+        // Generate CSV for export
+        function generateExportCSV() {
+            const headers = ['Current Team', 'Full Name', 'Pos', 'Overall', 'Potential', 'Player type', 'Role'];
+            const rows = [];
+
+            // Existing teams
+            Object.keys(teams).forEach(team => {
+                teams[team].forEach(player => {
+                    rows.push([
+                        team,
+                        player.name,
+                        player.position,
+                        player.overall,
+                        player.potential,
+                        player.playerType,
+                        player.role
+                    ]);
+                });
+            });
+
+            // Expansion teams
+            Object.keys(expansionTeams).forEach(team => {
+                expansionTeams[team].forEach(player => {
+                    rows.push([
+                        team,
+                        player.name,
+                        player.position,
+                        player.overall,
+                        player.potential,
+                        player.playerType,
+                        player.role
+                    ]);
+                });
+            });
+
+            // Convert to CSV string
+            const csv = [
+                headers.join(','),
+                ...rows.map(row => row.map(value => `"${value}"`).join(','))
+            ].join('\n');
+
+            return csv;
+        }
+
+        // Download CSV file
+        function downloadCSV(csv, filename) {
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            const url = URL.createObjectURL(blob);
+            link.setAttribute('href', url);
+            link.setAttribute('download', filename);
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        // Update player selection dropdowns
+        function updatePlayerSelections() {
+            const vancouverSign = document.getElementById('vancouverSign');
+            const seattleSign = document.getElementById('seattleSign');
+            const vancouverDraft = document.getElementById('vancouverDraft');
+            const seattleDraft = document.getElementById('seattleDraft');
+
+            // Clear existing options
+            [vancouverSign, seattleSign, vancouverDraft, seattleDraft].forEach(select => {
+                select.innerHTML = '<option value="">Select a player</option>';
+            });
+
+            // Collect and sort available players by Overall
+            const availablePlayers = [];
+            Object.keys(teams).forEach(team => {
+                if (losses[team] >= 4) return; // Max 4 total losses
+                teams[team].forEach(player => {
+                    if (!protectedPlayers[team]?.includes(player.name)) {
+                        availablePlayers.push({
+                            team,
+                            player,
+                            overall: isNaN(parseFloat(player.overall)) ? 0 : parseFloat(player.overall)
+                        });
+                    }
+                });
+            });
+
+            // Sort by Overall (descending)
+            availablePlayers.sort((a, b) => b.overall - a.overall);
+
+            // Populate dropdowns
+            availablePlayers.forEach(({ team, player }) => {
+                const option = `<option value="${team}|${player.name}">${team}: ${player.name} (${player.position}, ${player.overall})</option>`;
+                if (signingPhase) {
+                    vancouverSign.innerHTML += option;
+                    seattleSign.innerHTML += option;
+                } else {
+                    vancouverDraft.innerHTML += option;
+                    seattleDraft.innerHTML += option;
+                }
+            });
+        }
+
+        // Add player to expansion team
+        function addPlayer(expTeam, team, name, isSigning) {
+            const sourceTeam = teams[team];
+            const player = sourceTeam.find(p => p.name === name);
+            if (!player) {
+                alert('Player not found.');
+                return false;
+            }
+
+            if (losses[team] >= 4) {
+                alert(`Cannot select more players from ${team}.`);
+                return false;
+            }
+
+            if (isSigning && expansionTeams[expTeam].length >= 5) {
+                alert(`${expTeam} cannot sign more than 5 players.`);
+                return false;
+            }
+
+            expansionTeams[expTeam].push({
+                name: player.name,
+                position: player.position,
+                from: team,
+                overall: player.overall,
+                potential: player.potential,
+                playerType: player.playerType,
+                role: player.role,
+                stats: player.stats
+            });
+
+            teams[team] = sourceTeam.filter(p => p.name !== name);
+            losses[team] = (losses[team] || 0) + 1;
+
+            if (losses[team] === 2) {
+                protectedPlayers[team] = protectedPlayers[team] || [];
+            }
+
+            renderTeams();
+            renderExpansionTeams();
+            updatePlayerSelections();
+            return true;
+        }
+
+        // Event listeners for signing window
+        document.getElementById('addVancouverSign').addEventListener('click', () => {
+            const [team, name] = document.getElementById('vancouverSign').value.split('|');
+            if (team && name) {
+                addPlayer('Vancouver', team, name, true);
+            }
+        });
+
+        document.getElementById('addSeattleSign').addEventListener('click', () => {
+            const [team, name] = document.getElementById('seattleSign').value.split('|');
+            if (team && name) {
+                addPlayer('Seattle', team, name, true);
+            }
+        });
+
+        // Event listeners for draft
+        document.getElementById('addVancouverDraft').addEventListener('click', () => {
+            const [team, name] = document.getElementById('vancouverDraft').value.split('|');
+            if (team && name) {
+                addPlayer('Vancouver', team, name, false);
+            }
+        });
+
+        document.getElementById('addSeattleDraft').addEventListener('click', () => {
+            const [team, name] = document.getElementById('seattleDraft').value.split('|');
+            if (team && name) {
+                addPlayer('Seattle', team, name, false);
+            }
+        });
+
+        // Complete signing window
+        document.getElementById('completeSigning').addEventListener('click', () => {
+            signingPhase = false;
+            document.getElementById('signingWindow').classList.add('hidden');
+            document.getElementById('draftPhase').classList.remove('hidden');
+            updatePlayerSelections();
+        });
+
+        // Complete draft
+        document.getElementById('completeDraft').addEventListener('click', () => {
+            alert('Expansion draft completed! Review the rosters below.');
+            document.getElementById('exportRosters').classList.remove('hidden');
+        });
+
+        // Export rosters
+        document.getElementById('exportRosters').addEventListener('click', () => {
+            const csv = generateExportCSV();
+            downloadCSV(csv, 'pwhl_rosters_export.csv');
+        });
+
+        // Reset draft
+        document.getElementById('resetDraft').addEventListener('click', () => {
+            document.getElementById('csvUpload').value = '';
+            teams = {};
+            initialize();
+            renderTeams();
+            renderExpansionTeams();
+            document.getElementById('csvError').classList.add('hidden');
+        });
+
+        // Initial render
+        renderTeams();
+    </script>
+</body>
+</html>
